@@ -1,39 +1,48 @@
 import socket
+import keyboard
 import os
 import base64
 import threading
 
 IP = "127.0.0.1"
-port = 59000
-format = "utf-8"
-size = 1024
+PORT = 59000
+NUM_OF_FILES = 20
+BUFFERSIZE = 5120 # 5Kb
 
-def handle_client(client_socket):
+def handleClient(clientSocket, address):
+    # Init folder that will hold the client's files
+    # Clears out the illegal characters in folder names like . and ' by replacing them away
+    folderName = "Client " + str(address).replace(".", "_").replace("\'", "")
+    
+    # Make the folder with the client's address as the name
+    os.makedirs(folderName, exist_ok = True)
 
-    file_path =client_socket.recv(size).decode(format)
+    for i in range(NUM_OF_FILES):
+        # No need to decode as we recieve as bytes and then write it later into the file as bytes
+        fileName = clientSocket.recv(BUFFERSIZE).decode().split("\n")[0]
+        fileContent = clientSocket.recv(BUFFERSIZE)
 
-    print(f"recivedfilePath{file_path}")
-
-    with open(file_path,'wb') as data:
-
-       content = data.read()
-       print(content)
-
-    #print(file_path)
-
+        # Open file to write to
+        # fileName = "file" + str(i+1) + ".txt"
+        with open(os.path.join(folderName, fileName), "wb") as file:
+            print("Creating " + fileName)
+            file.write(fileContent)
 
 def main():
-
-    print(f"Server is listening on port{port}")
-    server = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-    server.bind((IP,port))
-    server.listen()
-    print("Server is listening for Clients")
+    # Initialize socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind( (IP, PORT) )
+    sock.listen()
+    print("Server is listening on port", PORT)
+    
+    # Listen for client requests
     while True:
+        client, address = sock.accept()
+        print("Got connection from", address)
+        
+        # Start a thread for each client
+        clientThread = threading.Thread(target=handleClient, args=(client, address,))
+        clientThread.start()
 
-       conn,addr= server.accept()
-       print(f"New Connection with{addr}")
-       client_thread = threading.Thread(target=handle_client,args=(conn,))
-       client_thread.start()
-
-main()
+if __name__ == "__main__":
+    main()
