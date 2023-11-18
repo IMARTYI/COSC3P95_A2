@@ -1,80 +1,49 @@
-import socket
+import base64
 import os
-import threading
 import gzip
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 
+from flask import Flask, request, jsonify
+
 ### Environment variables
 load_dotenv()
 
-IP = os.getenv("IP")
 PORT = int( os.getenv("PORT") )
-NUM_OF_FILES = int( os.getenv("NUM_OF_FILES") )
-HEADER_SIZE = int( os.getenv("HEADER_SIZE") )
 FORMAT = os.getenv("FORMAT")
 
 ### Encryption data
 key = Fernet.generate_key()
 cipherSuite = Fernet(key)
 
-### Server status
-exitServer = False
+### Server
+app = Flask(__name__)
 
-def handleClient(clientSocket, address):
-    global exitServer
+@app.route("/", methods=["GET"])
+def serveKey():
+    return jsonify(
+        {"key": key.decode(FORMAT) }
+    )
 
-    # Send the encryption key to the client
-    clientSocket.sendall(key)
+@app.route("/", methods=["POST"])
+def takeFile():
+    req = request.get_json()
 
-    # Init folder that will hold the client's files
-    # Clears out the illegal characters in folder names like . and ' by replacing them away
-    folderName = "Client " + str(address).replace(".", "_").replace("\'", "")
-    
-    # Make the folder with the client's address as the name
-    os.makedirs(folderName, exist_ok = True)
+    name = req.get("name", "DEFAULT")
+    files = req.get("files", {})
 
-    for i in range(NUM_OF_FILES):
-        # Get header data as args
-        headerData = clientSocket.recv(HEADER_SIZE).decode(FORMAT).split(",")
-        fileName = headerData[0]            # First arg in header is file name
-        fileSize = int( headerData[1] )     # Second arg in header is file size
-
-        if fileName == "KILL":
-            exitServer = True
-            os.rmdir(folderName)
-            break
-
-        encryptedContent = clientSocket.recv(fileSize)
-        encryptedContent = gzip.decompress(encryptedContent)
-        fileContent = cipherSuite.decrypt(encryptedContent)
+    for fileName, fileData in files.items():
+        fileContent = base64.b64decode(fileData.encode(FORMAT))
+        fileContent = gzip.decompress(fileContent)
+        fileContent = cipherSuite.decrypt(fileContent)
 
         # Open file to write to
-        with open(os.path.join(folderName, fileName), "wb") as file:
+        os.makedirs(name, exist_ok=True)
+        with open(os.path.join(name, fileName), "wb") as file:
             file.write(fileContent)
             print("Created " + fileName)
-        
-    clientSocket.close()
 
-def main():
-    global exitServer
-
-    # Initialize socket
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind( (IP, PORT) )
-    sock.listen()
-    print("Server is listening on port", PORT)
-    
-    # Listen for client requests
-    while not exitServer:
-        client, address = sock.accept()
-        print("Got connection from", address)
-        
-        # Start a thread for each client
-        clientThread = threading.Thread(target=handleClient, args=(client, address))
-        clientThread.start()
-    
-    sock.close()
+    return jsonify(message="success")
 
 if __name__ == "__main__":
-    main()
+    app.run(host="0.0.0.0", port=PORT)

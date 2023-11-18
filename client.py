@@ -1,48 +1,41 @@
-import socket
-import os
+import base64
 import gzip
+import os
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
+import requests
 
 ### Environment variables
 load_dotenv()
 
-IP = os.getenv("IP")
 PORT = int( os.getenv("PORT") )
-NUM_OF_FILES = int( os.getenv("NUM_OF_FILES") )
-HEADER_SIZE = int( os.getenv("HEADER_SIZE") )
 FORMAT = os.getenv("FORMAT")
 FOLDER_NAME = "localFolder"
 
+url = f"http://127.0.0.1:{PORT}/"
 def main():
-    # Connect to server socket
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.connect( (IP, PORT) )
-
-    key = server.recv(44) # 44 is size of key sent by server
-    cipherSuite = Fernet(key)
-    print(key)
+    ## Get the key
+    response = requests.get(url)
+    key = response.json()["key"]
+    cipherSuite = Fernet( key.encode(FORMAT) )
 
     # Get list of file names in folder
     files = os.listdir(FOLDER_NAME) # Grab the contents of the file to send
+    filesJSON = {}
 
+    ## Construct the files json
     for fileName in files:
         # Open each file in byte read mode
         with open(os.path.join(FOLDER_NAME, fileName), "r") as file:
             fileContent = file.read().encode(FORMAT)
             encryptedContent = cipherSuite.encrypt(fileContent)
             encryptedContent = gzip.compress(encryptedContent)
-            contentSize = len(encryptedContent)
-
-            # Pad the file name to make it the size of the server's buffersize
-            paddedHeader = (f"{fileName},{contentSize},").ljust(HEADER_SIZE)
-
-            # Send to the server the file name
-            server.sendall( paddedHeader.encode(FORMAT) )
-
-            # Send the file content to the server
-            print(f"Sending contents of {fileName} to server...")
-            server.sendall( encryptedContent )
+            filesJSON[fileName] = base64.b64encode(encryptedContent).decode(FORMAT)
+    
+    requests.post(url, json={
+        "name": "NAME",
+        "files": filesJSON
+    })
 
 if __name__ == "__main__":
     main()
