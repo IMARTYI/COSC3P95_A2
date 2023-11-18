@@ -1,5 +1,6 @@
 import socket
 import os
+import gzip
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 
@@ -30,6 +31,7 @@ def main():
         with open(os.path.join(FOLDER_NAME, fileName), "r") as file:
             fileContent = file.read().encode(FORMAT)
             encryptedContent = cipherSuite.encrypt(fileContent)
+            encryptedContent = gzip.compress(encryptedContent)
             contentSize = len(encryptedContent)
 
             # Pad the file name to make it the size of the server's buffersize

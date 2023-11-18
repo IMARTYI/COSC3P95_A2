@@ -1,6 +1,7 @@
 import socket
 import os
 import threading
+import gzip
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 
@@ -34,10 +35,10 @@ def handleClient(clientSocket, address):
     os.makedirs(folderName, exist_ok = True)
 
     for i in range(NUM_OF_FILES):
-        # No need to decode as we recieve as bytes and then write it later into the file as bytes
+        # Get header data as args
         headerData = clientSocket.recv(HEADER_SIZE).decode(FORMAT).split(",")
-        fileName = headerData[0]
-        fileSize = int( headerData[1] )
+        fileName = headerData[0]            # First arg in header is file name
+        fileSize = int( headerData[1] )     # Second arg in header is file size
 
         if fileName == "KILL":
             exitServer = True
@@ -45,6 +46,7 @@ def handleClient(clientSocket, address):
             break
 
         encryptedContent = clientSocket.recv(fileSize)
+        encryptedContent = gzip.decompress(encryptedContent)
         fileContent = cipherSuite.decrypt(encryptedContent)
 
         # Open file to write to
