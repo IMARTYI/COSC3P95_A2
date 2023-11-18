@@ -15,6 +15,7 @@ def main():
     # Connect to server socket
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.connect( (IP, PORT) )
+    server.recv(44)
     server.send( "KILL,0".encode(FORMAT) )
 
 if __name__ == "__main__":

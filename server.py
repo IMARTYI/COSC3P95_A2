@@ -1,8 +1,10 @@
 import socket
 import os
 import threading
+from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 
+### Environment variables
 load_dotenv()
 
 IP = os.getenv("IP")
@@ -11,10 +13,18 @@ NUM_OF_FILES = int( os.getenv("NUM_OF_FILES") )
 HEADER_SIZE = int( os.getenv("HEADER_SIZE") )
 FORMAT = os.getenv("FORMAT")
 
+### Encryption data
+key = Fernet.generate_key()
+cipherSuite = Fernet(key)
+
+### Server status
 exitServer = False
 
 def handleClient(clientSocket, address):
     global exitServer
+
+    # Send the encryption key to the client
+    clientSocket.sendall(key)
 
     # Init folder that will hold the client's files
     # Clears out the illegal characters in folder names like . and ' by replacing them away
@@ -34,7 +44,8 @@ def handleClient(clientSocket, address):
             os.rmdir(folderName)
             break
 
-        fileContent = clientSocket.recv(fileSize)
+        encryptedContent = clientSocket.recv(fileSize)
+        fileContent = cipherSuite.decrypt(encryptedContent)
 
         # Open file to write to
         with open(os.path.join(folderName, fileName), "wb") as file:
