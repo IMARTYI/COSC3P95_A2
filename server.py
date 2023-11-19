@@ -1,48 +1,100 @@
-import socket
-import keyboard
-import os
 import base64
-import threading
+import os
+import gzip
+import time
+import random
+from cryptography.fernet import Fernet
+from dotenv import load_dotenv
+from flask import Flask, request, jsonify
+from opentelemetry import trace
+from opentelemetry.exporter.jaeger.thrift import JaegerExporter
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.instrumentation.flask import FlaskInstrumentor
+from opentelemetry.sdk.resources import Resource
 
-IP = "127.0.0.1"
-PORT = 59000
-NUM_OF_FILES = 20
-BUFFERSIZE = 5120 # 5Kb
+### Environment variables
+load_dotenv()
 
-def handleClient(clientSocket, address):
-    # Init folder that will hold the client's files
-    # Clears out the illegal characters in folder names like . and ' by replacing them away
-    folderName = "Client " + str(address).replace(".", "_").replace("\'", "")
-    
-    # Make the folder with the client's address as the name
-    os.makedirs(folderName, exist_ok = True)
+PORT = int( os.getenv("PORT") )
+FORMAT = os.getenv("FORMAT")
 
-    for i in range(NUM_OF_FILES):
-        # No need to decode as we recieve as bytes and then write it later into the file as bytes
-        fileName = clientSocket.recv(BUFFERSIZE).decode().split("\n")[0]
-        fileContent = clientSocket.recv(BUFFERSIZE)
+### Encryption data
+key = Fernet.generate_key()
+cipherSuite = Fernet(key)
 
-        # Open file to write to
-        # fileName = "file" + str(i+1) + ".txt"
-        with open(os.path.join(folderName, fileName), "wb") as file:
-            print("Creating " + fileName)
-            file.write(fileContent)
+#### Set up Jaeger exporter and tracing
+jaeger_exporter = JaegerExporter(
+    agent_host_name="localhost",
+    agent_port=6831,
+)
 
-def main():
-    # Initialize socket
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind( (IP, PORT) )
-    sock.listen()
-    print("Server is listening on port", PORT)
-    
-    # Listen for client requests
-    while True:
-        client, address = sock.accept()
-        print("Got connection from", address)
-        
-        # Start a thread for each client
-        clientThread = threading.Thread(target=handleClient, args=(client, address,))
-        clientThread.start()
 
+
+tracer_provider = TracerProvider(resource=Resource.create({"service.name": "server"}))
+trace.set_tracer_provider(tracer_provider)
+tracer_provider.add_span_processor(SimpleSpanProcessor(jaeger_exporter))
+
+tracer = trace.get_tracer(__name__)
+
+### Flask App
+app = Flask(__name__)
+FlaskInstrumentor().instrument_app(app)
+
+### Methods
+
+
+def generate_bug(errorRate): # Creating deliberate delay on the client side
+    if random.random() < errorRate:
+        time.sleep(5) # introduce delay of Five seconds
+
+
+def createFile(folder, name,  content):
+
+    with tracer.start_as_current_span("Create file") as span:
+        generate_bug(0.3) # Introduce deliberate delay
+        with open(os.path.join(folder, name), "wb") as file:
+            file.write(content)
+            span.add_event("File creation", {"name": name})
+
+### Endpoints
+@app.route("/", methods=["GET"])
+def serveKey():
+    with tracer.start_as_current_span("Serve key") as span:
+        span.set_attribute("Method", request.method)
+        span.set_attribute("Client", request.remote_addr)
+        span.add_event("Sent key", {"key": key.decode(FORMAT)})
+
+    return jsonify({
+        "key": key.decode(FORMAT)
+    })
+
+@app.route("/", methods=["POST"])
+def takeFiles():
+    with tracer.start_as_current_span("TakeFiles") as span:
+        req = request.get_json()
+
+        name = req.get("name", "DEFAULT")
+        files = req.get("files", {})
+
+        span.set_attribute("Method", request.method)
+        span.set_attribute("Client", request.remote_addr)
+        span.set_attribute("File Count", len(files.keys()))
+        span.set_attribute("Client name", name)
+
+        os.makedirs(name, exist_ok=True)
+        for fileName, fileData in files.items():
+            fileContent = base64.b64decode(fileData.encode(FORMAT))
+            fileContent = gzip.decompress(fileContent)
+            fileContent = cipherSuite.decrypt(fileContent)
+
+            createFile(name, fileName, fileContent)
+
+    return jsonify(message="success")
+
+
+### Driver
 if __name__ == "__main__":
-    main()
+    with tracer.start_as_current_span("main") as span:
+        span.set_attribute("Type", "server")
+        app.run(host="0.0.0.0", port=PORT)
