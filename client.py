@@ -42,14 +42,12 @@ def main():
         key = response.json()["key"]
         cipherSuite = Fernet( key.encode(FORMAT) )
 
-
-
     with tracer.start_as_current_span("Construct JSON") as span:
         # Get list of file names in folder
         files = os.listdir(FOLDER_NAME) # Grab the contents of the file to send
         filesJSON = {}
 
-        numOfFiles = random.randint(1, len(files))
+        numOfFiles = len(files)#random.randint(1, len(files))
 
         span.set_attribute("File count", numOfFiles)
 
@@ -61,7 +59,8 @@ def main():
 
                 child.set_attribute("File", fileName)
 
-                # Open each file in byte read mode
+
+
                 with open(os.path.join(FOLDER_NAME, fileName), "r") as file:
                     fileContent = file.read().encode(FORMAT)
                     encryptedContent = cipherSuite.encrypt(fileContent)
