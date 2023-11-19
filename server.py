@@ -3,8 +3,14 @@ import os
 import gzip
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
-
 from flask import Flask, request, jsonify
+
+from opentelemetry import trace
+from opentelemetry.exporter.jaeger.thrift import JaegerExporter
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.instrumentation.flask import FlaskInstrumentor
+from opentelemetry.sdk.resources import Resource
 
 ### Environment variables
 load_dotenv()
@@ -16,34 +22,66 @@ FORMAT = os.getenv("FORMAT")
 key = Fernet.generate_key()
 cipherSuite = Fernet(key)
 
-### Server
-app = Flask(__name__)
+#### Set up Jaeger exporter and tracing
+jaeger_exporter = JaegerExporter(
+    agent_host_name="localhost",
+    agent_port=6831,
+)
 
+tracer_provider = TracerProvider(resource=Resource.create({"service.name": "server"}))
+trace.set_tracer_provider(tracer_provider)
+tracer_provider.add_span_processor(SimpleSpanProcessor(jaeger_exporter))
+
+tracer = trace.get_tracer(__name__)
+
+### Flask App
+app = Flask(__name__)
+FlaskInstrumentor().instrument_app(app)
+
+### Methods
+def createFile(folder, name,  content):
+    with tracer.start_as_current_span("Create file") as span:
+        with open(os.path.join(folder, name), "wb") as file:
+            file.write(content)
+            span.add_event("File creation", {"name": name})
+
+### Endpoints
 @app.route("/", methods=["GET"])
 def serveKey():
-    return jsonify(
-        {"key": key.decode(FORMAT) }
-    )
+    with tracer.start_as_current_span("Serve key") as span:
+        span.set_attribute("Method", request.method)
+        span.set_attribute("Client", request.remote_addr)
+        span.add_event("Sent key", {"key": key.decode(FORMAT)})
+
+    return jsonify({
+        "key": key.decode(FORMAT)
+    })
 
 @app.route("/", methods=["POST"])
-def takeFile():
-    req = request.get_json()
+def takeFiles():
+    with tracer.start_as_current_span("TakeFiles") as span:
+        req = request.get_json()
 
-    name = req.get("name", "DEFAULT")
-    files = req.get("files", {})
+        name = req.get("name", "DEFAULT")
+        files = req.get("files", {})
 
-    for fileName, fileData in files.items():
-        fileContent = base64.b64decode(fileData.encode(FORMAT))
-        fileContent = gzip.decompress(fileContent)
-        fileContent = cipherSuite.decrypt(fileContent)
+        span.set_attribute("Method", request.method)
+        span.set_attribute("Client", request.remote_addr)
+        span.set_attribute("File Count", len(files.keys()) )
+        span.set_attribute("Client name", name)
 
-        # Open file to write to
         os.makedirs(name, exist_ok=True)
-        with open(os.path.join(name, fileName), "wb") as file:
-            file.write(fileContent)
-            print("Created " + fileName)
+        for fileName, fileData in files.items():
+            fileContent = base64.b64decode(fileData.encode(FORMAT))
+            fileContent = gzip.decompress(fileContent)
+            fileContent = cipherSuite.decrypt(fileContent)
+
+            createFile(name, fileName, fileContent)
 
     return jsonify(message="success")
 
+### Driver
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=PORT)
+    with tracer.start_as_current_span("main") as span:
+        span.set_attribute("Type", "server")
+        app.run(host="0.0.0.0", port=PORT)
