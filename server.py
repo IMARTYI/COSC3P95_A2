@@ -52,7 +52,10 @@ def generate_bug(errorRate): # Creating deliberate delay on the client side
 def createFile(folder, name,  content):
 
     with tracer.start_as_current_span("Create file") as span:
-        generate_bug(0.3) # Introduce deliberate delay
+
+        if random.random( ) <0.05: # Predicate P
+            generate_bug(0.3) # Introduce deliberate delay
+            
         with open(os.path.join(folder, name), "wb") as file:
             file.write(content)
             span.add_event("File creation", {"name": name})
