@@ -53,7 +53,8 @@ def createFile(folder, name,  content):
 
     with tracer.start_as_current_span("Create file") as span:
 
-        if random.random( ) <0.05: # Predicate P
+        if random.random() < 0.5: # Predicate P
+
             generate_bug(0.3) # Introduce deliberate delay
             
         with open(os.path.join(folder, name), "wb") as file:
